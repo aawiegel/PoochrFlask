@@ -19,6 +19,11 @@ from poochr import storage
 from flask import Flask, current_app, redirect, render_template, request, \
     url_for
 
+from google.cloud import error_reporting
+import google.cloud.logging
+import httplib2
+from oauth2client.contrib.flask_util import UserOAuth2
+
 import os
 
 import numpy as np
@@ -55,7 +60,14 @@ with open('breed_lsa.p', 'rb') as file:
 
 def get_model():
     model_backend = current_app.config['DATA_BACKEND']
-    if model_backend == 'cloudsql':
+    if model_backend == 'cloud    @app.errorhandler(500)
+    def server_error(e):
+        client = error_reporting.Client(app.config['PROJECT_ID'])
+        client.report_exception(
+            http_context=error_reporting.build_flask_context(request))
+        return """
+        An internal error occurred.
+        """, 500sql':
         from . import model_cloudsql
         model = model_cloudsql
     elif model_backend == 'datastore':
@@ -104,9 +116,10 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
     if config_overrides:
         app.config.update(config_overrides)
 
-    # Configure logging
     if not app.testing:
-        logging.basicConfig(level=logging.INFO)
+        client = google.cloud.logging.Client(app.config['PROJECT_ID'])
+        # Attaches a Google Stackdriver logging handler to the root logger
+        client.setup_logging(logging.INFO)
 
     # Setup the data model.
     with app.app_context():
@@ -198,9 +211,11 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
     # applications.
     @app.errorhandler(500)
     def server_error(e):
+        client = error_reporting.Client(app.config['PROJECT_ID'])
+        client.report_exception(
+            http_context=error_reporting.build_flask_context(request))
         return """
-        An internal error occurred: <pre>{}</pre>
-        See logs for full stacktrace.
-        """.format(e), 500
+        An internal error occurred.
+        """, 500
 
     return app
