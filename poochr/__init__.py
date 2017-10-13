@@ -17,7 +17,9 @@ import logging
 from poochr import storage
 
 from flask import Flask, current_app, redirect, render_template, request, \
-    url_for
+    url_for, flash
+
+import datetime
 
 from google.cloud import error_reporting
 import google.cloud.logging
@@ -42,7 +44,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 model = load_model('xbreeds_model.h5')
 breed_to_index = np.load('breed_indices.npy').tolist()
 index_to_breed = {v: k for k, v in breed_to_index.items()}
-max_breed_mat = np.load('breed_max_matrix.npy')
+avg_breed_mat = np.load('breed_avg_matrix.npy')
 with open('dog_vocabulary.p', 'rb') as file:
     dog_vocab = pickle.load(file)
 with open('dog_lsa_matrix.npy', 'rb') as file:
@@ -60,14 +62,7 @@ with open('breed_lsa.p', 'rb') as file:
 
 def get_model():
     model_backend = current_app.config['DATA_BACKEND']
-    if model_backend == 'cloud    @app.errorhandler(500)
-    def server_error(e):
-        client = error_reporting.Client(app.config['PROJECT_ID'])
-        client.report_exception(
-            http_context=error_reporting.build_flask_context(request))
-        return """
-        An internal error occurred.
-        """, 500sql':
+    if model_backend == 'cloud':
         from . import model_cloudsql
         model = model_cloudsql
     elif model_backend == 'datastore':
@@ -141,24 +136,31 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
             data = request.form.to_dict(flat=True)
 
             if len(data['desc']) > 1000:
-                flash('Shorten your text description to less than 1000 characters.')
+                flash('Error: Shorten your text description to less than 1000 characters.')
                 return redirect(url_for('index'))
-            if 'image' not in request.files:
-                flash('No file part')
-                return redirect(url_for('index'))
+            #if 'image' not in request.files:
+            #    flash('No file part')
+            #    return redirect(url_for('index'))
             # If an image was uploaded, update the data to point to the new image.
             # [START image_url]
-            image_url = upload_image_file(request.files.get('image'))
+            image_file = request.files.get('image')
+            if not image_file:
+                flash('Error: Please provide an image file.')
+                return redirect(url_for('index'))
+
             # [END image_url]
             # [START image_url2]
-            if image_url:
-                data['imageUrl'] = image_url
 
+
+            image_url = upload_image_file(image_file)
+            data['imageUrl'] = image_url
             # [END image_url2]
+
+            data['datetime'] = datetime.datetime.utcnow().strftime("%Y-%m-%d-%H%M%S")
 
             messages = [data['desc']]
 
-            img = image.load_img(request.files.get('image'),
+            img = image.load_img(image_file,
                                  target_size=(299, 299))
             img = image.img_to_array(img)
             img = np.expand_dims(img, axis=0)
@@ -179,7 +181,7 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
             dog_text_vec = dog_tfidf.fit_transform([data['desc']])
             dog_lsa_vec = breed_lsa.transform(dog_text_vec)
 
-            image_similarity = cosine_similarity(max_breed_mat, dog_vec[0])
+            image_similarity = cosine_similarity(avg_breed_mat, dog_vec[0])
             text_similarity = cosine_similarity(dog_lsa_mat, dog_lsa_vec)
 
             weight = 0.5
@@ -196,8 +198,6 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
             data['recommendations_str'] = breeds
 
             labels_breeds_urls = zip(labels, breeds, urls)
-            for item in data.values():
-                print(type(item))
             dog = get_model().create(data)
 
             return render_template('predict_image.html',
