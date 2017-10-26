@@ -130,6 +130,25 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
     def index():
         return render_template('index.html')
 
+    @app.route("/feedback", methods=['GET', 'POST'])
+    def submit_feedback():
+        if request.method == 'POST':
+            data = request.form.to_dict(flat=True)
+
+            if len(data['message']) > 1000:
+                flash('Error: Shorten your text description to less than 1000 characters.')
+                return redirect(url_for('index'))
+
+            feedback = get_model().create(data)
+
+            flash('Thank you for your feedback')
+            return redirect(url_for('index'))
+
+        return redirect(url_for('index'))
+
+
+
+
     @app.route('/predict', methods=['GET', 'POST'])
     def predict_file():
         if request.method == 'POST':
@@ -188,11 +207,12 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
             combined_sim = weight*image_similarity + (1-weight)*text_similarity
             guesses = np.argsort(combined_sim.T)[0][::-1]
 
-            labels = [index_to_breed[guess].split("-", 1)[0] for guess in guesses[:3]]
-            breeds = [index_to_breed[guess].split("-", 1)[1] for guess in guesses[:3]]
+            labels = ["notdog" if guess == 114 else index_to_breed[guess].split("-", 1)[0]  for guess in guesses[:3]]
+            breeds = ["not_dog" if guess == 114 else index_to_breed[guess].split("-", 1)[1] for guess in guesses[:3]]
             urls = [dogtime_url_dict[breed.lower()] for breed in breeds]
             breeds = [url.split("/")[-1].replace("-", " ").replace("_", " ").title() \
                       for url in urls]
+            breeds = [breed if breed else "not dogs" for breed in breeds]
 
             data['recommendations'] = [int(guess) for guess in guesses[:3]]
             data['recommendations_str'] = breeds
@@ -202,7 +222,8 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
 
             return render_template('predict_image.html',
                                    image_url=image_url, messages=messages,
-                                   labels_breeds_urls = labels_breeds_urls)
+                                   labels_breeds_urls = labels_breeds_urls,
+                                   timestamp = data['datetime'])
         return redirect(url_for('index'))
 
 

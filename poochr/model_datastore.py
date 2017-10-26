@@ -73,7 +73,7 @@ def update(data, id=None):
     if id:
         key = ds.key('dog', int(id))
     else:
-        key = ds.key('dog')
+        key = ds.key(data['type'])
 
     entity = datastore.Entity(
         key=key,
