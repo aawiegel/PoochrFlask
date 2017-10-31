@@ -52,6 +52,9 @@ with open('dog_lsa_matrix.npy', 'rb') as file:
 with open('dogtime_urls.p', 'rb') as file:
     dogtime_url_dict = pickle.load(file)
 
+with open('default_dog_vec.npy', 'rb') as file:
+    default_dog_vec = np.load(file)
+
 generate_dog_features = K.function([model.layers[0].input, K.learning_phase()],
                                   [model.layers[-2].output])
 
@@ -164,14 +167,25 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
             # [START image_url]
             image_file = request.files.get('image')
             if not image_file:
-                flash('Error: Please provide an image file.')
-                return redirect(url_for('index'))
+                image_url="/static/dogs/default_dog.jpg"
+                image_file = image_url
+                #flash('Error: Please provide an image file.')
+                #return redirect(url_for('index'))
+                dog_vec = default_dog_vec
+            else:
+                image_url = upload_image_file(image_file)
+                img = image.load_img(image_file,
+                                     target_size=(299, 299))
+                img = image.img_to_array(img)
+                img = np.expand_dims(img, axis=0)
+                img = preprocess_input(img)
+                dog_vec = generate_dog_features([img, 0])
 
             # [END image_url]
             # [START image_url2]
 
 
-            image_url = upload_image_file(image_file)
+            #image_url = upload_image_file(image_file)
             data['imageUrl'] = image_url
             # [END image_url2]
 
@@ -179,12 +193,7 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
 
             messages = [data['desc']]
 
-            img = image.load_img(image_file,
-                                 target_size=(299, 299))
-            img = image.img_to_array(img)
-            img = np.expand_dims(img, axis=0)
-            img = preprocess_input(img)
-            dog_vec = generate_dog_features([img, 0])
+
 
             best_guess = np.argmax(dog_vec)
             if best_guess == 114:
