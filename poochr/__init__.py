@@ -38,17 +38,22 @@ from keras.models import load_model
 from keras.preprocessing import image
 from keras.applications.xception import preprocess_input
 from keras import backend as K
-from sklearn.feature_extraction.text import TfidfVectorizer
+
+import re
+import string
+
 from sklearn.metrics.pairwise import cosine_similarity
 
 model = load_model('xbreeds_model.h5')
 breed_to_index = np.load('breed_indices.npy').tolist()
 index_to_breed = {v: k for k, v in breed_to_index.items()}
 avg_breed_mat = np.load('breed_avg_matrix.npy')
-with open('dog_vocabulary.p', 'rb') as file:
-    dog_vocab = pickle.load(file)
-with open('dog_lsa_matrix.npy', 'rb') as file:
-    dog_lsa_mat = np.load(file)
+breed_glove_mat = np.load('breed_glove_matrix.npy')
+
+# GloVe embeddings
+with open('glove_vec_dict.p', 'rb') as file:
+    embeddings_index = pickle.load(file)
+
 with open('dogtime_urls.p', 'rb') as file:
     dogtime_url_dict = pickle.load(file)
 
@@ -58,22 +63,12 @@ with open('default_dog_vec.npy', 'rb') as file:
 generate_dog_features = K.function([model.layers[0].input, K.learning_phase()],
                                   [model.layers[-2].output])
 
-dog_tfidf = TfidfVectorizer(vocabulary=dog_vocab, ngram_range = (1,2))
-
-with open('breed_lsa.p', 'rb') as file:
-    breed_lsa = pickle.load(file)
 
 def get_model():
     model_backend = current_app.config['DATA_BACKEND']
-    if model_backend == 'cloud':
-        from . import model_cloudsql
-        model = model_cloudsql
-    elif model_backend == 'datastore':
+    if model_backend == 'datastore':
         from . import model_datastore
         model = model_datastore
-    elif model_backend == 'mongodb':
-        from . import model_mongodb
-        model = model_mongodb
     else:
         raise ValueError(
             "No appropriate databackend configured. "
@@ -99,6 +94,28 @@ def upload_image_file(file):
         "Uploaded file %s as %s.", file.filename, public_url)
 
     return public_url
+
+def tokenize_input(sentence):
+    """
+    Tokenizes a sentence, removes punctuation, and converts to lowercase letters.
+    """
+    translate_table = dict((ord(char), None) for char in string.punctuation)
+    sentence_list = sentence.split()
+    return [x.translate(translate_table).lower() for x in sentence_list]
+
+def vectorize_words(model, words):
+    """
+    Take a list of words, and convert it into the sum of the word vectors
+    for the model, ignoring out of vocabulary words
+    """
+    word_vec = np.zeros(len(model['you']))
+    for word in words:
+        try:
+            word_vec += model[word]
+        except:
+            pass
+
+    return word_vec
 
 #def allowed_file(filename):
 #    return '.' in filename and \
@@ -206,11 +223,18 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
             data['best_guess'] = int(best_guess)
             data['best_guess_str'] = index_to_breed[best_guess]
 
-            dog_text_vec = dog_tfidf.fit_transform([data['desc']])
-            dog_lsa_vec = breed_lsa.transform(dog_text_vec)
+            dog_text_vec = vectorize_words(embeddings_index, tokenize_input(data['desc']))
 
             image_similarity = cosine_similarity(avg_breed_mat, dog_vec[0])
-            text_similarity = cosine_similarity(dog_lsa_mat, dog_lsa_vec)
+            text_similarity = cosine_similarity(breed_glove_mat, dog_text_vec.reshape(1, -1))
+            image_max = np.max(image_similarity)
+            text_max = np.max(text_similarity)
+
+            if image_max:
+                image_similarity /= image_max
+
+            if text_max:
+                text_similarity /= text_max
 
             weight = 0.5
             combined_sim = weight*image_similarity + (1-weight)*text_similarity
@@ -239,7 +263,7 @@ def create_app(config, debug=False, testing=False, config_overrides=None):
     # Add an error handler. This is useful for debugging the live application,
     # however, you should disable the output of the exception for production
     # applications.
-    @app.errorhandler(500)
+    #@app.errorhandler(500)
     def server_error(e):
         client = error_reporting.Client(app.config['PROJECT_ID'])
         client.report_exception(
